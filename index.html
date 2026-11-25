@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendimiento de opciones</title>
+<meta name="robots" content="noindex">
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f4f3f0; --surface:#fcfcfb; --line:#dddcd6; --text:#0b0b0b; --text2:#52514e; --muted:#8a897f;
+  --pos:#2a78d6; --neg:#e34948; --accent:#2a78d6; --warn-bg:#fff3d1; --warn-tx:#6b4a00;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    color-scheme:dark;
+    --bg:#121211; --surface:#1a1a19; --line:#34342f; --text:#f0efec; --text2:#c3c2b7; --muted:#8f8e84;
+    --pos:#3987e5; --neg:#e66767; --accent:#3987e5; --warn-bg:#3a2f10; --warn-tx:#f3d68a;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:18px 16px 0;max-width:1100px;margin:0 auto}
+h1{font-size:20px;margin:0 0 2px}
+header p{margin:0;color:var(--text2);font-size:13px}
+nav{display:flex;gap:4px;max-width:1100px;margin:14px auto 0;padding:0 16px;border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--text2);padding:8px 12px;font:inherit;cursor:pointer;white-space:nowrap}
+nav button[aria-selected=true]{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 4px}
+.card .sub{color:var(--text2);font-size:13px;margin:0 0 10px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi .l{font-size:12px;color:var(--text2)}
+.kpi .v{font-size:21px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi .n{font-size:11px;color:var(--muted)}
+.warn{background:var(--warn-bg);color:var(--warn-tx);border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.warn li{margin-left:16px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--text2);font-weight:600;font-size:12px}
+th:first-child,td:first-child,th.t,td.t{text-align:left}
+td input,td select{width:100%;min-width:70px}
+input,select,textarea,button{font:inherit;color:inherit}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+textarea{width:100%;min-height:130px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace}
+.btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
+.btn.s{background:none;color:var(--text);border:1px solid var(--line)}
+.btn.x{background:none;color:var(--text2);border:0;padding:2px 6px;cursor:pointer}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:8px 0}
+.row label{display:flex;flex-direction:column;font-size:12px;color:var(--text2);gap:3px}
+.muted{color:var(--muted)} .empty{color:var(--text2);padding:18px 0;text-align:center}
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:auto}
+.tip{position:absolute;pointer-events:none;background:var(--text);color:var(--surface);font-size:12px;padding:5px 8px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-110%);display:none;z-index:2}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--text2)}
+code{font:12px ui-monospace,Menlo,Consolas,monospace;background:var(--bg);padding:1px 4px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rendimiento de opciones</h1>
+  <p>Los datos se guardan solo en este navegador. Nada se sube a ningún servidor.</p>
+</header>
+<nav id="nav"></nav>
+<main id="app"></main>
+
+<script>
+/*ENGINE-START*/
+const MONTHS={EN:1,FE:2,MR:3,AB:4,MY:5,JN:6,JL:7,AG:8,SE:9,OC:10,NO:11,DI:12};
+const pad=n=>String(n).padStart(2,"0");
+const iso=(y,m,d)=>y+"-"+pad(m)+"-"+pad(d);
+function thirdFriday(y,m){
+  const dow=new Date(Date.UTC(y,m-1,1)).getUTCDay();
+  return iso(y,m,1+((5-dow+7)%7)+14);
+}
+function opexExpiry(code){
+  const m=/^([A-Z]{2})(\d{2})$/.exec(String(code||"").toUpperCase());
+  if(!m||!MONTHS[m[1]])return null;
+  return thirdFriday(2000+Number(m[2]),MONTHS[m[1]]);
+}
+function parseNum(s){
+  if(typeof s==="number")return s;
+  s=String(s==null?"":s).trim().replace(/\s|\$/g,"");
+  if(!s)return NaN;
+  if(s.includes(","))s=s.replace(/\./g,"").replace(",",".");
+  return /^[-+]?\d*\.?\d+$/.test(s)?Number(s):NaN;
+}
+function parseDate(s,defYear){
+  s=String(s||"").trim();
+  let m=/^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if(m)return iso(+m[1],+m[2],+m[3]);
+  m=/^(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?$/.exec(s);
+  if(!m)return null;
+  let y=m[3]?+m[3]:(defYear||new Date().getFullYear());
+  if(y<100)y+=2000;
+  if(+m[2]<1||+m[2]>12||+m[1]<1||+m[1]>31)return null;
+  return iso(y,+m[2],+m[1]);
+}
+const kindOf=t=>{t=String(t||"").trim().toUpperCase();return t==="CALL"||t==="C"?"C":t==="PUT"||t==="P"?"P":null;};
+/* Acepta filas copiadas de la planilla (tabuladas: ESTRATEGIA | TIPO FECHA CANT BASE PRIMA ...,
+   calls y puts en la misma fila) o líneas "CALL -20 5200 84 [fecha] [@OPEX] [#estrategia]". */
+function parsePaste(text,def){
+  const out=[],bad=[];
+  String(text||"").split(/\r?\n/).forEach(line=>{
+    if(!line.trim())return;
+    let found=0;
+    if(line.includes("\t")){
+      const t=line.split("\t");
+      const strat=kindOf(t[0])?"":t[0].trim();
+      for(let i=0;i<t.length;i++){
+        const k=kindOf(t[i]);if(!k)continue;
+        const q=parseNum(t[i+2]),K=parseNum(t[i+3]),p=parseNum(t[i+4]);
+        if(isFinite(q)&&q!==0&&K>0&&p>=0){
+          out.push({date:parseDate(t[i+1])||def.date,opex:def.opex,kind:k,qty:q,strike:K,premium:p,strat:strat||def.strat||""});
+          found++;
+        }
+      }
+      if(!found&&/\d/.test(line)&&/CALL|PUT/i.test(line)&&/\t-?\d+[.,]?\d*\t\d/.test(line))bad.push(line);
+      return;
+    }
+    const w=line.trim().split(/\s+/);let k=null,opex=def.opex,strat=def.strat||"",date=def.date;const nums=[];
+    w.forEach(x=>{
+      if(!k&&kindOf(x)){k=kindOf(x);return;}
+      if(x[0]==="@"){opex=x.slice(1).toUpperCase();return;}
+      if(x[0]==="#"){strat=x.slice(1).replace(/_/g," ");return;}
+      if(/[\/]|^\d{4}-/.test(x)&&parseDate(x)){date=parseDate(x);return;}
+      const n=parseNum(x);if(isFinite(n))nums.push(n);
+    });
+    if(k&&nums.length>=3&&nums[nums.length-3]!==0)
+      out.push({date,opex,kind:k,qty:nums[nums.length-3],strike:nums[nums.length-2],premium:nums[nums.length-1],strat});
+    else bad.push(line);
+  });
+  return {trades:out,bad};
+}
+const cashOf=(t,s)=>{const g=-t.qty*t.premium*s.mult;return g-Math.abs(g)*s.comm/100;};
+const intrinsic=(kind,K,S)=>Math.max(kind==="C"?S-K:K-S,0);
+/* Peor resultado a vencimiento de una posición {“C|5200”: cant}. -Infinity si hay calls netos vendidos. */
+function minPayoff(pos,mult){
+  const legs=Object.entries(pos).filter(e=>e[1]!==0).map(([k,q])=>({kind:k[0],K:+k.slice(2),q}));
+  if(!legs.length)return 0;
+  if(legs.filter(l=>l.kind==="C").reduce((a,l)=>a+l.q,0)<-1e-9)return -Infinity;
+  const pay=S=>legs.reduce((a,l)=>a+l.q*intrinsic(l.kind,l.K,S)*mult,0);
+  return Math.min(...[0,...legs.map(l=>l.K)].map(pay));
+}
+function compute(state,today){
+  const s=Object.assign({comm:0.5445,rf:0,mult:100},state.settings||{});
+  const trades=(state.trades||[]).map((t,i)=>Object.assign({i},t)).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:a.i-b.i);
+  const opexInfo=code=>{const o=(state.opex||{})[code]||{};return {expiry:o.expiry||opexExpiry(code),settle:(o.settle===""||o.settle==null)?null:Number(o.settle)};};
+  // --- realización por posición (opex|tipo|base): cierra al volver a 0 o al vencimiento ---
+  const pos={},events=[],open=[],missing=new Set();
+  trades.forEach(t=>{
+    const key=t.opex+"|"+t.kind+"|"+t.strike,p=pos[key]||(pos[key]={qty:0,cash:0,t});
+    p.qty+=t.qty;p.cash+=cashOf(t,s);
+    if(Math.abs(p.qty)<1e-9){events.push({date:t.date,pnl:p.cash,key});p.qty=0;p.cash=0;}
+  });
+  Object.entries(pos).forEach(([key,p])=>{
+    if(Math.abs(p.qty)<1e-9)return;
+    const [opex,kind,K]=key.split("|"),o=opexInfo(opex);
+    if(o.settle!=null&&o.expiry)events.push({date:o.expiry,pnl:p.cash+p.qty*intrinsic(kind,+K,o.settle)*s.mult,key});
+    else{open.push({opex,kind,strike:+K,qty:p.qty,cash:p.cash,expiry:o.expiry});if(o.expiry&&o.expiry<today)missing.add(opex);}
+  });
+  // --- instancias de estrategia (opex + etiqueta) ---
+  const groups={};
+  trades.forEach(t=>{
+    const name=(t.strat||"").trim()||"sin etiqueta",gk=t.opex+"|"+name;
+    const g=groups[gk]||(groups[gk]={opex:t.opex,strat:name,cash:0,pos:{},first:t.date,last:t.date,risk:0,byDate:[]});
+    g.cash+=cashOf(t,s);g.pos[t.kind+"|"+t.strike]=(g.pos[t.kind+"|"+t.strike]||0)+t.qty;g.last=t.date;
+    const d=g.byDate[g.byDate.length-1];
+    const snap={date:t.date,cash:g.cash,pos:Object.assign({},g.pos)};
+    if(d&&d.date===t.date)g.byDate[g.byDate.length-1]=snap;else g.byDate.push(snap);
+  });
+  const strategies=Object.values(groups).map(g=>{
+    g.byDate.forEach(d=>{g.risk=Math.max(g.risk,-(d.cash+minPayoff(d.pos,s.mult)));});
+    const flat=Object.values(g.pos).every(q=>Math.abs(q)<1e-9),o=opexInfo(g.opex);
+    let status="abierta",pnl=null,date=null;
+    if(flat){status="cerrada";pnl=g.cash;date=g.last;}
+    else if(o.settle!=null&&o.expiry){
+      status="vencida";date=o.expiry;
+      pnl=g.cash+Object.entries(g.pos).reduce((a,[k,q])=>a+q*intrinsic(k[0],+k.slice(2),o.settle)*s.mult,0);
+    }
+    return {opex:g.opex,strat:g.strat,type:g.strat.replace(/\s+\d+$/,""),status,pnl,date,first:g.first,cash:g.cash,risk:g.risk,
+            ror:(pnl!=null&&isFinite(g.risk)&&g.risk>0)?pnl/g.risk:null};
+  });
+  // --- meses: Dietz modificado ---
+  const flows=(state.flows||[]).filter(f=>f.date&&isFinite(+f.amount)).map(f=>({date:f.date,amount:+f.amount}));
+  const all=[...flows.map(f=>f.date),...events.map(e=>e.date)].sort();
+  const months=[];
+  if(all.length){
+    let [y,m]=all[0].slice(0,7).split("-").map(Number);
+    const end=[all[all.length-1].slice(0,7),today.slice(0,7)].sort()[1];
+    let idx=1,guard=0;
+    while(iso(y,m,1).slice(0,7)<=end&&guard++<600){
+      const ym=y+"-"+pad(m),dim=new Date(Date.UTC(y,m,0)).getUTCDate();
+      const before=x=>x.date.slice(0,7)<ym,inM=x=>x.date.slice(0,7)===ym;
+      const e0=flows.filter(before).reduce((a,f)=>a+f.amount,0)+events.filter(before).reduce((a,e)=>a+e.pnl,0);
+      const fl=flows.filter(inM),pnl=events.filter(inM).reduce((a,e)=>a+e.pnl,0);
+      const flow=fl.reduce((a,f)=>a+f.amount,0);
+      const den=e0+fl.reduce((a,f)=>a+f.amount*(dim-(+f.date.slice(8)))/dim,0);
+      const ret=den>0?pnl/den:null;
+      if(ret!=null)idx*=1+ret;
+      months.push({ym,start:e0,flow,pnl,ret,end:e0+flow+pnl,index:ret!=null||months.length?idx:null});
+      if(++m>12){m=1;y++;}
+    }
+    while(months.length&&months[0].ret==null&&months[0].pnl===0&&months[0].start+months[0].flow<=0)months.shift();
+  }
+  // --- métricas ---
+  const rs=months.filter(x=>x.ret!=null).map(x=>x.ret),n=rs.length,rfm=s.rf/100/12;
+  const mean=n?rs.reduce((a,b)=>a+b,0)/n:null;
+  const sd=n>1?Math.sqrt(rs.reduce((a,b)=>a+(b-mean)**2,0)/(n-1)):null;
+  const dd=n?Math.sqrt(rs.reduce((a,b)=>a+Math.min(b-rfm,0)**2,0)/n):null;
+  const twr=n?rs.reduce((a,b)=>a*(1+b),1)-1:null;
+  const ann=n&&twr>-1?Math.pow(1+twr,12/n)-1:null;
+  let peak=1,cur=1,maxDD=0;rs.forEach(r=>{cur*=1+r;peak=Math.max(peak,cur);maxDD=Math.min(maxDD,cur/peak-1);});
+  const done=strategies.filter(x=>x.pnl!=null),wins=done.filter(x=>x.pnl>0),losses=done.filter(x=>x.pnl<0);
+  const sum=a=>a.reduce((x,y)=>x+y.pnl,0);
+  const avgWin=wins.length?sum(wins)/wins.length:null,worst=losses.length?Math.min(...losses.map(x=>x.pnl)):null;
+  const rors=done.filter(x=>x.ror!=null).map(x=>x.ror);
+  const stats={
+    months:n,mean,sd,twr,ann,maxDD:n?maxDD:null,
+    sharpe:sd?((mean-rfm)/sd)*Math.sqrt(12):null,
+    sortino:dd?((mean-rfm)/dd)*Math.sqrt(12):null,
+    calmar:(ann!=null&&maxDD<0)?ann/Math.abs(maxDD):null,
+    realized:events.reduce((a,e)=>a+e.pnl,0),capital:flows.reduce((a,f)=>a+f.amount,0),
+    nTrades:done.length,winRate:done.length?wins.length/done.length:null,
+    profitFactor:losses.length?sum(wins)/Math.abs(sum(losses)):(wins.length?Infinity:null),
+    expectancy:done.length?sum(done)/done.length:null,avgWin,avgLoss:losses.length?sum(losses)/losses.length:null,worst,
+    tail:(worst!=null&&avgWin)?Math.abs(worst)/avgWin:null,
+    avgRor:rors.length?rors.reduce((a,b)=>a+b,0)/rors.length:null
+  };
+  const types={};
+  done.forEach(x=>{const t=types[x.type]||(types[x.type]={type:x.type,n:0,pnl:0,wins:0,rors:[]});t.n++;t.pnl+=x.pnl;if(x.pnl>0)t.wins++;if(x.ror!=null)t.rors.push(x.ror);});
+  return {stats,months,strategies,open,events,missing:[...missing],types:Object.values(types).sort((a,b)=>b.pnl-a.pnl),settings:s};
+}
+/*ENGINE-END*/
+
+// ---------------- estado ----------------
+const KEY="rendimiento-opciones.v1";
+const blank=()=>({settings:{comm:0.5445,rf:0,mult:100},flows:[],trades:[],opex:{}});
+let state=blank(),tab="resumen",pasteMsg="";
+try{const raw=localStorage.getItem(KEY);if(raw)state=Object.assign(blank(),JSON.parse(raw));}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}};
+const today=()=>{const d=new Date();return iso(d.getFullYear(),d.getMonth()+1,d.getDate());};
+const uid=()=>Math.random().toString(36).slice(2,10);
+
+// ---------------- formato ----------------
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const nf0=new Intl.NumberFormat("es-AR",{maximumFractionDigits:0});
+const nf2=new Intl.NumberFormat("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2});
+const sign=v=>v>0?"+":v<0?"−":"";
+const money=v=>v==null?"—":sign(v)+"$ "+nf0.format(Math.abs(v));
+const pct=(v,d=1)=>v==null?"—":!isFinite(v)?"∞":sign(v)+(Math.abs(v)*100).toFixed(d).replace(".",",")+"%";
+const num=(v,d=2)=>v==null?"—":!isFinite(v)?"∞":(v<0?"−":"")+Math.abs(v).toFixed(d).replace(".",",");
+const mesTxt=ym=>["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"][+ym.slice(5)-1]+" "+ym.slice(2,4);
+const fdate=d=>d?d.slice(8)+"/"+d.slice(5,7)+"/"+d.slice(2,4):"—";
+
+// ---------------- gráficos ----------------
+function niceTicks(lo,hi,n=4){
+  if(lo===hi){lo-=1;hi+=1;}
+  const raw=(hi-lo)/n,mag=Math.pow(10,Math.floor(Math.log10(raw))),st=[1,2,2.5,5,10].find(x=>x*mag>=raw)*mag;
+  const t=[];for(let v=Math.floor(lo/st)*st;v<=hi+st*0.999;v+=st)t.push(+v.toFixed(10));
+  return t;
+}
+function lineChart(pts,fmt){
+  const W=720,H=240,L=52,R=56,T=14,B=26,ys=pts.map(p=>p.y),tk=niceTicks(Math.min(...ys),Math.max(...ys));
+  const y0=tk[0],y1=tk[tk.length-1],X=i=>L+(pts.length>1?i/(pts.length-1):0.5)*(W-L-R),Y=v=>T+(1-(v-y0)/(y1-y0))*(H-T-B);
+  const step=Math.ceil(pts.length/8),last=pts[pts.length-1];
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Índice de rendimiento, base 100" data-chart="line">
+    ${tk.map(v=>`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L-8}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmt(v)}</text>`).join("")}
+    ${pts.map((p,i)=>i%step===0?`<text x="${X(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(p.label)}</text>`:"").join("")}
+    <polyline fill="none" stroke="var(--pos)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${pts.map((p,i)=>X(i)+","+Y(p.y)).join(" ")}"/>
+    <circle cx="${X(pts.length-1)}" cy="${Y(last.y)}" r="4" fill="var(--pos)" stroke="var(--surface)" stroke-width="2"/>
+    <text x="${X(pts.length-1)+8}" y="${Y(last.y)+4}" font-size="12" font-weight="600" fill="var(--text)">${fmt(last.y)}</text>
+    <line class="cross" y1="${T}" y2="${H-B}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>
+    <circle class="dot" r="4" fill="var(--pos)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+    ${pts.map((p,i)=>`<rect class="hit" x="${X(i)-(W-L-R)/Math.max(pts.length-1,1)/2}" y="${T}" width="${(W-L-R)/Math.max(pts.length-1,1)}" height="${H-T-B}" fill="transparent" data-x="${X(i)}" data-y="${Y(p.y)}" data-tip="${esc(p.tip)}"/>`).join("")}
+  </svg>`;
+}
+function barChart(bars,fmt){
+  const W=720,H=220,L=64,R=12,T=12,B=26,vs=bars.map(b=>b.v),tk=niceTicks(Math.min(0,...vs),Math.max(0,...vs));
+  const y0=tk[0],y1=tk[tk.length-1],Y=v=>T+(1-(v-y0)/(y1-y0))*(H-T-B),slot=(W-L-R)/bars.length,bw=Math.min(28,Math.max(4,slot-2));
+  const step=Math.ceil(bars.length/10);
+  const bar=(b,i)=>{
+    const x=L+slot*i+(slot-bw)/2,h=Math.abs(Y(b.v)-Y(0)),r=Math.min(4,bw/2,h),z=Y(0);
+    if(h<0.5)return "";
+    const d=b.v>=0?`M${x},${z}V${z-h+r}Q${x},${z-h} ${x+r},${z-h}H${x+bw-r}Q${x+bw},${z-h} ${x+bw},${z-h+r}V${z}Z`
+                  :`M${x},${z}V${z+h-r}Q${x},${z+h} ${x+r},${z+h}H${x+bw-r}Q${x+bw},${z+h} ${x+bw},${z+h-r}V${z}Z`;
+    return `<path d="${d}" fill="var(${b.v>=0?"--pos":"--neg"})"/>`;
+  };
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Resultado realizado por mes" data-chart="bar">
+    ${tk.map(v=>`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L-8}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmt(v)}</text>`).join("")}
+    <line x1="${L}" x2="${W-R}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--text2)" stroke-width="1"/>
+    ${bars.map(bar).join("")}
+    ${bars.map((b,i)=>i%step===0?`<text x="${L+slot*i+slot/2}" y="${H-8}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(b.label)}</text>`:"").join("")}
+    ${bars.map((b,i)=>`<rect class="hit" x="${L+slot*i}" y="${T}" width="${slot}" height="${H-T-B}" fill="transparent" data-x="${L+slot*i+slot/2}" data-y="${Math.min(Y(b.v),Y(0))}" data-tip="${esc(b.tip)}"/>`).join("")}
+  </svg>`;
+}
+function wireCharts(){
+  document.querySelectorAll(".chart").forEach(box=>{
+    const svg=box.querySelector("svg"),tip=box.querySelector(".tip");if(!svg)return;
+    const cross=svg.querySelector(".cross"),dot=svg.querySelector(".dot");
+    const show=e=>{
+      const r=e.target;if(!r.classList||!r.classList.contains("hit"))return;
+      const k=svg.getBoundingClientRect().width/svg.viewBox.baseVal.width,x=+r.dataset.x,y=+r.dataset.y;
+      tip.textContent=r.dataset.tip;tip.style.display="block";tip.style.left=x*k+"px";tip.style.top=y*k+"px";
+      if(cross){cross.setAttribute("x1",x);cross.setAttribute("x2",x);cross.setAttribute("visibility","visible");
+        dot.setAttribute("cx",x);dot.setAttribute("cy",y);dot.setAttribute("visibility","visible");}
+    };
+    const hide=()=>{tip.style.display="none";if(cross){cross.setAttribute("visibility","hidden");dot.setAttribute("visibility","hidden");}};
+    svg.addEventListener("pointermove",show);svg.addEventListener("pointerdown",show);svg.addEventListener("pointerleave",hide);
+  });
+}
+
+// ---------------- vistas ----------------
+const TABS=[["resumen","Resumen"],["operaciones","Operaciones"],["capital","Capital"],["opex","Vencimientos"],["datos","Datos"]];
+const kpi=(l,v,n)=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>${n?`<div class="n">${n}</div>`:""}</div>`;
+
+function viewResumen(c){
+  const s=c.stats;
+  if(!state.trades.length&&!state.flows.length)
+    return `<div class="card empty"><p>Todavía no hay datos.</p><p>Cargá tu capital en <b>Capital</b> y pegá tus operaciones en <b>Operaciones</b>, o probá con datos de ejemplo desde <b>Datos</b>.</p></div>`;
+  const w=[];
+  if(!state.flows.length)w.push("Falta cargar el capital: sin aportes no se puede calcular retorno, Sharpe ni drawdown.");
+  if(c.missing.length)w.push("Falta el precio de cierre de "+c.missing.map(esc).join(", ")+" (pestaña Vencimientos): sus posiciones a finish no están contadas.");
+  if(s.months>0&&s.months<12)w.push("Hay "+s.months+" "+(s.months===1?"mes":"meses")+" de historia. Con menos de 12, Sharpe, Sortino y el anualizado son muy poco confiables.");
+  if(c.strategies.some(x=>!isFinite(x.risk)))w.push("Hay estrategias con calls vendidos sin cubrir: su riesgo es ilimitado y no entran en el promedio de resultado sobre riesgo.");
+  const idx=c.months.filter(m=>m.index!=null);
+  const pts=idx.length?[{label:"inicio",y:100,tip:"Inicio: 100"},...idx.map(m=>({label:mesTxt(m.ym),y:m.index*100,tip:mesTxt(m.ym)+": "+num(m.index*100,1)+(m.ret!=null?" ("+pct(m.ret)+")":"")}))]:[];
+  const bars=c.months.map(m=>({label:mesTxt(m.ym),v:m.pnl,tip:mesTxt(m.ym)+": "+money(m.pnl)}));
+  return `
+  ${w.length?`<div class="warn">${w.map(x=>"<li>"+x+"</li>").join("")}</div>`:""}
+  <div class="kpis">
+    ${kpi("Resultado realizado",money(s.realized),"neto de comisiones")}
+    ${kpi("Retorno acumulado",pct(s.twr),"ajustado por aportes y retiros")}
+    ${kpi("Retorno anualizado",pct(s.ann),s.months+" meses")}
+    ${kpi("Drawdown máximo",pct(s.maxDD),"sobre cierres mensuales")}
+    ${kpi("Sharpe",num(s.sharpe),"anualizado, mensual")}
+    ${kpi("Sortino",num(s.sortino),"solo volatilidad negativa")}
+    ${kpi("Retorno / drawdown",num(s.calmar),"anualizado sobre la peor caída")}
+    ${kpi("Profit factor",num(s.profitFactor),"ganado / perdido")}
+    ${kpi("Aciertos",s.winRate==null?"—":pct(s.winRate,0).replace("+",""),s.nTrades+" estrategias cerradas")}
+    ${kpi("Resultado promedio",money(s.expectancy),"por estrategia")}
+    ${kpi("Peor pérdida / ganancia prom.",s.tail==null?"—":num(s.tail,1)+"×","ganancias que borra la peor")}
+    ${kpi("Resultado / riesgo prom.",pct(s.avgRor,0),"sobre pérdida máxima")}
+  </div>
+  ${pts.length>1?`<div class="card"><h2>Índice de rendimiento</h2><p class="sub">Base 100. Encadena los retornos mensuales, así los aportes no cuentan como ganancia.</p><div class="chart">${lineChart(pts,v=>num(v,0))}<div class="tip"></div></div></div>`:""}
+  ${bars.length?`<div class="card"><h2>Resultado realizado por mes</h2><p class="sub">En pesos. Cada posición cuenta en el mes en que se cierra o vence.</p><div class="chart">${barChart(bars,v=>nf0.format(v/1000)+"k")}<div class="tip"></div></div></div>`:""}
+  <div class="card"><h2>Mes a mes</h2><div class="tw"><table>
+    <tr><th>Mes</th><th>Capital inicial</th><th>Aportes / retiros</th><th>Resultado</th><th>Retorno</th><th>Capital final</th></tr>
+    ${c.months.slice().reverse().map(m=>`<tr><td>${mesTxt(m.ym)}</td><td>${"$ "+nf0.format(m.start)}</td><td>${m.flow?money(m.flow):"—"}</td><td>${money(m.pnl)}</td><td>${pct(m.ret)}</td><td>${"$ "+nf0.format(m.end)}</td></tr>`).join("")||`<tr><td colspan="6" class="empty">Sin meses todavía.</td></tr>`}
+  </table></div></div>
+  <div class="card"><h2>Por tipo de estrategia</h2><p class="sub">Solo estrategias cerradas o vencidas.</p><div class="tw"><table>
+    <tr><th>Tipo</th><th>Cantidad</th><th>Resultado</th><th>Aciertos</th><th>Resultado / riesgo prom.</th></tr>
+    ${c.types.map(t=>`<tr><td>${esc(t.type)}</td><td>${t.n}</td><td>${money(t.pnl)}</td><td>${Math.round(t.wins/t.n*100)}%</td><td>${t.rors.length?pct(t.rors.reduce((a,b)=>a+b,0)/t.rors.length,0):"—"}</td></tr>`).join("")||`<tr><td colspan="5" class="empty">Sin estrategias cerradas.</td></tr>`}
+  </table></div></div>
+  <div class="card"><h2>Estrategias</h2><p class="sub">El riesgo es la peor pérdida posible a vencimiento que tuvo la estructura al cierre de cada día.</p><div class="tw"><table>
+    <tr><th>Opex</th><th class="t">Estrategia</th><th class="t">Estado</th><th>Apertura</th><th>Cierre</th><th>Resultado</th><th>Riesgo máximo</th><th>Resultado / riesgo</th></tr>
+    ${c.strategies.slice().sort((a,b)=>(b.date||"9")<(a.date||"9")?-1:1).map(x=>`<tr><td>${esc(x.opex)}</td><td class="t">${esc(x.strat)}</td><td class="t"><span class="pill">${x.status}</span></td><td>${fdate(x.first)}</td><td>${fdate(x.date)}</td><td>${x.pnl==null?`<span class="muted">cobrado ${money(x.cash)}</span>`:money(x.pnl)}</td><td>${isFinite(x.risk)?"$ "+nf0.format(x.risk):"ilimitado"}</td><td>${pct(x.ror,0)}</td></tr>`).join("")}
+  </table></div></div>`;
+}
+
+function viewOperaciones(c){
+  const opexes=[...new Set(state.trades.map(t=>t.opex))];
+  return `
+  <div class="card"><h2>Pegar operaciones</h2>
+    <p class="sub">Copiá las filas de la planilla (de ESTRATEGIA a NETO, calls y puts juntos) y pegalas acá. También sirve una por línea: <code>CALL -20 5200 84 20/11/26 #cuna</code>. Cantidad negativa es venta.</p>
+    <div class="row">
+      <label>Opex<input id="pOpex" size="6" placeholder="DI26" value="${esc(opexes[opexes.length-1]||"")}"></label>
+      <label>Fecha si la fila no trae<input id="pDate" type="date" value="${today()}"></label>
+      <label>Estrategia si la fila no trae<input id="pStrat" size="14" placeholder="opcional"></label>
+    </div>
+    <textarea id="pText" placeholder="Pegá acá"></textarea>
+    <div class="row"><button class="btn" data-act="paste">Agregar</button><span class="muted">${esc(pasteMsg)}</span></div>
+  </div>
+  <div class="card"><h2>Operaciones cargadas (${state.trades.length})</h2><div class="tw"><table>
+    <tr><th class="t">Fecha</th><th class="t">Opex</th><th class="t">Estrategia</th><th class="t">Tipo</th><th>Cantidad</th><th>Base</th><th>Prima</th><th>Neto</th><th></th></tr>
+    ${state.trades.slice().sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0).map(t=>`<tr>
+      <td class="t"><input type="date" value="${esc(t.date)}" data-edit="trade" data-id="${t.id}" data-f="date"></td>
+      <td class="t"><input size="5" value="${esc(t.opex)}" data-edit="trade" data-id="${t.id}" data-f="opex"></td>
+      <td class="t"><input size="12" value="${esc(t.strat)}" data-edit="trade" data-id="${t.id}" data-f="strat"></td>
+      <td class="t">${t.kind==="C"?"Call":"Put"}</td><td>${nf0.format(t.qty)}</td><td>${nf0.format(t.strike)}</td><td>${nf2.format(t.premium)}</td>
+      <td>${money(cashOf(t,c.settings))}</td><td><button class="btn x" title="Borrar" data-act="delTrade" data-id="${t.id}">✕</button></td></tr>`).join("")||`<tr><td colspan="9" class="empty">Sin operaciones.</td></tr>`}
+  </table></div></div>
+  <div class="card"><h2>Posiciones abiertas</h2><div class="tw"><table>
+    <tr><th>Opex</th><th class="t">Tipo</th><th>Base</th><th>Cantidad</th><th>Flujo neto</th><th>Vence</th></tr>
+    ${c.open.map(o=>`<tr><td>${esc(o.opex)}</td><td class="t">${o.kind==="C"?"Call":"Put"}</td><td>${nf0.format(o.strike)}</td><td>${nf0.format(o.qty)}</td><td>${money(o.cash)}</td><td>${fdate(o.expiry)}</td></tr>`).join("")||`<tr><td colspan="6" class="empty">Sin posiciones abiertas.</td></tr>`}
+  </table></div></div>`;
+}
+
+function viewCapital(){
+  return `
+  <div class="card"><h2>Aportes y retiros</h2>
+    <p class="sub">Es la plata sobre la que se mide el retorno. Vos elegís la base: el portfolio entero o solo lo que asignás a opciones. Retiro con monto negativo.</p>
+    <div class="row">
+      <label>Fecha<input id="fDate" type="date" value="${today()}"></label>
+      <label>Monto<input id="fAmt" inputmode="decimal" placeholder="1500000"></label>
+      <label>Nota<input id="fNote" size="18" placeholder="opcional"></label>
+      <button class="btn" data-act="addFlow">Agregar</button>
+    </div>
+    <div class="tw"><table>
+      <tr><th class="t">Fecha</th><th>Monto</th><th class="t">Nota</th><th></th></tr>
+      ${state.flows.slice().sort((a,b)=>a.date<b.date?1:-1).map(f=>`<tr><td class="t">${fdate(f.date)}</td><td>${money(+f.amount)}</td><td class="t">${esc(f.note)}</td><td><button class="btn x" title="Borrar" data-act="delFlow" data-id="${f.id}">✕</button></td></tr>`).join("")||`<tr><td colspan="4" class="empty">Sin movimientos.</td></tr>`}
+    </table></div>
+  </div>
+  <div class="card"><h2>Parámetros</h2>
+    <div class="row">
+      <label>Comisión total por operación (%)<input data-set="comm" inputmode="decimal" size="8" value="${esc(String(state.settings.comm).replace(".",","))}"></label>
+      <label>Tasa libre de riesgo, TNA (%)<input data-set="rf" inputmode="decimal" size="8" value="${esc(String(state.settings.rf).replace(".",","))}"></label>
+      <label>Acciones por lote<input data-set="mult" inputmode="numeric" size="6" value="${esc(state.settings.mult)}"></label>
+    </div>
+    <p class="sub">La tasa libre de riesgo se resta en Sharpe y Sortino. En pesos conviene poner la caución.</p>
+  </div>`;
+}
+
+function viewOpex(){
+  const codes=[...new Set(state.trades.map(t=>t.opex))].sort((a,b)=>(opexExpiry(a)||a)<(opexExpiry(b)||b)?-1:1);
+  return `<div class="card"><h2>Vencimientos</h2>
+    <p class="sub">Para las posiciones que van a finish, cargá el precio de cierre de GGAL el día del vencimiento. Con eso se calcula cuánto valió cada opción al vencer.</p>
+    <div class="tw"><table>
+      <tr><th class="t">Opex</th><th class="t">Vencimiento</th><th class="t">Precio de cierre del subyacente</th></tr>
+      ${codes.map(k=>{const o=state.opex[k]||{};return `<tr><td class="t">${esc(k)}</td>
+        <td class="t"><input type="date" value="${esc(o.expiry||opexExpiry(k)||"")}" data-edit="opex" data-id="${esc(k)}" data-f="expiry"></td>
+        <td class="t"><input inputmode="decimal" placeholder="todavía no venció" value="${o.settle==null?"":esc(String(o.settle).replace(".",","))}" data-edit="opex" data-id="${esc(k)}" data-f="settle"></td></tr>`;}).join("")||`<tr><td colspan="3" class="empty">Aparecen solos al cargar operaciones.</td></tr>`}
+    </table></div></div>`;
+}
+
+function viewDatos(){
+  return `<div class="card"><h2>Respaldo</h2>
+    <p class="sub">Los datos viven solo en este navegador. Exportá un archivo para tener copia o para pasarlos a otro dispositivo.</p>
+    <div class="row"><button class="btn" data-act="export">Exportar</button>
+      <label class="btn s" style="cursor:pointer;color:var(--text)">Importar<input id="imp" type="file" accept="application/json,.json" hidden></label></div></div>
+  <div class="card"><h2>Datos de ejemplo</h2><p class="sub">Carga operaciones inventadas para ver cómo queda. Reemplaza lo que haya.</p>
+    <div class="row"><button class="btn s" data-act="demo">Cargar ejemplo</button><button class="btn s" data-act="wipe">Borrar todo</button></div></div>`;
+}
+
+function demo(){
+  const T=(date,opex,kind,qty,strike,premium,strat)=>({id:uid(),date,opex,kind,qty,strike,premium,strat});
+  return {settings:{comm:0.5445,rf:0,mult:100},
+    flows:[{id:uid(),date:"2026-06-01",amount:900000,note:"capital inicial"},{id:uid(),date:"2026-09-10",amount:600000,note:"aporte"}],
+    opex:{AG26:{settle:7900},OC26:{settle:5400}},
+    trades:[
+      T("2026-06-10","AG26","P",1,7200,240,"long put 1"),T("2026-06-23","AG26","P",-1,7200,153,"long put 1"),
+      T("2026-07-01","AG26","C",-2,7600,610,"call ratio 1"),T("2026-07-01","AG26","C",4,8300,303,"call ratio 1"),
+      T("2026-07-10","AG26","C",2,7600,560,"call ratio 1"),T("2026-07-10","AG26","C",-4,8300,354,"call ratio 1"),
+      T("2026-07-30","AG26","C",1,8000,380,"1x1 1"),T("2026-07-30","AG26","C",-1,8600,158,"1x1 1"),
+      T("2026-08-25","OC26","C",2,8000,197.5,"bull call 1"),T("2026-08-25","OC26","C",-2,8600,98.4,"bull call 1"),
+      T("2026-09-16","OC26","P",-3,5600,120,"bull put 1"),T("2026-09-16","OC26","P",3,5200,48,"bull put 1"),
+      T("2026-09-22","OC26","C",-2,6600,95,"bear call 1"),T("2026-09-22","OC26","C",2,7000,41,"bear call 1"),
+      T("2026-10-02","OC26","P",-2,5000,60,"bull put 2"),T("2026-10-02","OC26","P",2,4600,22,"bull put 2"),
+      T("2026-11-03","DI26","C",-2,5800,70,"iron condor 1"),T("2026-11-03","DI26","C",2,6200,31,"iron condor 1"),
+      T("2026-11-03","DI26","P",-2,4400,66,"iron condor 1"),T("2026-11-03","DI26","P",2,4000,28,"iron condor 1")
+    ]};
+}
+
+function render(){
+  document.getElementById("nav").innerHTML=TABS.map(([k,l])=>`<button aria-selected="${k===tab}" data-tab="${k}">${l}</button>`).join("");
+  const c=compute(state,today());
+  document.getElementById("app").innerHTML=({resumen:viewResumen,operaciones:viewOperaciones,capital:viewCapital,opex:viewOpex,datos:viewDatos})[tab](c);
+  wireCharts();
+}
+
+document.addEventListener("click",e=>{
+  const t=e.target.closest("[data-tab],[data-act]");if(!t)return;
+  if(t.dataset.tab){tab=t.dataset.tab;pasteMsg="";render();return;}
+  const a=t.dataset.act,$=id=>document.getElementById(id);
+  if(a==="paste"){
+    const opex=$("pOpex").value.trim().toUpperCase(),txt=$("pText").value;
+    const r=parsePaste(txt,{opex,date:$("pDate").value||today(),strat:$("pStrat").value.trim()});
+    const noOpex=r.trades.filter(x=>!x.opex).length;
+    if(noOpex){pasteMsg="Falta indicar el opex (por ejemplo DI26).";render();$("pText").value=txt;return;}
+    r.trades.forEach(x=>state.trades.push(Object.assign({id:uid()},x)));
+    pasteMsg=r.trades.length+" operaciones agregadas"+(r.bad.length?"; "+r.bad.length+" líneas no se pudieron leer":"")+".";
+  }
+  if(a==="delTrade")state.trades=state.trades.filter(x=>x.id!==t.dataset.id);
+  if(a==="addFlow"){
+    const amt=parseNum($("fAmt").value);if(!isFinite(amt)||!amt||!$("fDate").value)return;
+    state.flows.push({id:uid(),date:$("fDate").value,amount:amt,note:$("fNote").value.trim()});
+  }
+  if(a==="delFlow")state.flows=state.flows.filter(x=>x.id!==t.dataset.id);
+  if(a==="export"){
+    const u=URL.createObjectURL(new Blob([JSON.stringify(state,null,1)],{type:"application/json"}));
+    const l=document.createElement("a");l.href=u;l.download="rendimiento-"+today()+".json";l.click();URL.revokeObjectURL(u);return;
+  }
+  if(a==="demo"){if(state.trades.length&&!confirm("Esto reemplaza tus datos por los de ejemplo. ¿Seguir?"))return;state=demo();tab="resumen";}
+  if(a==="wipe"){if(!confirm("Se borran todas las operaciones y el capital de este navegador. ¿Seguir?"))return;state=blank();}
+  save();render();
+});
+document.addEventListener("change",e=>{
+  const t=e.target;
+  if(t.id==="imp"&&t.files[0]){
+    t.files[0].text().then(x=>{try{const d=JSON.parse(x);if(!Array.isArray(d.trades))throw 0;state=Object.assign(blank(),d);tab="resumen";save();render();}catch(_){alert("El archivo no es un respaldo válido.");}});
+    return;
+  }
+  if(t.dataset.set){const v=parseNum(t.value);if(isFinite(v)&&v>=0&&(t.dataset.set!=="mult"||v>0))state.settings[t.dataset.set]=v;save();render();return;}
+  if(t.dataset.edit==="trade"){
+    const x=state.trades.find(x=>x.id===t.dataset.id);if(!x)return;
+    const v=t.value.trim();
+    if(t.dataset.f==="date"){if(v)x.date=v;}else if(t.dataset.f==="opex"){if(v)x.opex=v.toUpperCase();}else x.strat=v;
+    save();render();
+  }
+  if(t.dataset.edit==="opex"){
+    const o=state.opex[t.dataset.id]||(state.opex[t.dataset.id]={});
+    if(t.dataset.f==="expiry")o.expiry=t.value||undefined;
+    else{const v=parseNum(t.value);o.settle=isFinite(v)&&v>0?v:null;}
+    save();render();
+  }
+});
+render();
+</script>
+</body>
+</html>
